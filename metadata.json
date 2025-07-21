@@ -1,0 +1,8 @@
+{
+  "name": "AI-Powered LaTeX Document Creator",
+  "description": "An intelligent LaTeX editor that helps you create, edit, and convert documents between Beamer presentations and article-style notes. Use AI-powered prompts to generate and modify LaTeX code, create content from images and PDFs, and seamlessly switch between formats.",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "prompt": ""
+}
