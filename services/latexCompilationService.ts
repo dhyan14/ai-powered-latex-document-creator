@@ -7,9 +7,10 @@
  */
 export const compileLatexToPdf = async (latexCode: string): Promise<Blob> => {
   // Switched to a different CORS proxy to improve reliability, as public proxies can be unstable or blocked.
-  const corsProxy = 'https://cors.bridged.cc/';
+  // This proxy requires URL encoding of the target URL.
+  const corsProxyPrefix = 'https://api.allorigins.win/raw?url=';
   const rtexEndpoint = 'https://rtex.probablya.dev/api/v2/tex';
-  const apiEndpoint = `${corsProxy}${rtexEndpoint}`;
+  const apiEndpoint = `${corsProxyPrefix}${encodeURIComponent(rtexEndpoint)}`;
   
   let compileResponse;
 
@@ -79,7 +80,7 @@ export const compileLatexToPdf = async (latexCode: string): Promise<Blob> => {
 
   // Second API call to download the resulting PDF, also through the proxy
   const rtexPdfUrl = `https://rtex.probablya.dev/api/v2/l/${result.filename}`;
-  const pdfUrl = `${corsProxy}${rtexPdfUrl}`;
+  const pdfUrl = `${corsProxyPrefix}${encodeURIComponent(rtexPdfUrl)}`;
   let pdfResponse;
 
   try {
@@ -109,5 +110,8 @@ export const compileLatexToPdf = async (latexCode: string): Promise<Blob> => {
     if(textContent.toLowerCase().includes("proxy") || textContent.toLowerCase().includes("error")) { // Generic check for proxy error page
         throw new Error("The CORS proxy returned an error page instead of a PDF. The compiled file may have expired or the proxy failed.");
     }
-    throw new Error(
-      `Downloaded file is not a PDF (was ${pdfBlob.type}).
+    throw new Error(`Downloaded file is not a PDF (was ${pdfBlob.type}). The proxy service may have failed or returned an error page.`);
+  }
+  
+  return pdfBlob;
+};
