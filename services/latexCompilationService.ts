@@ -1,28 +1,27 @@
 
 /**
  * Compiles LaTeX code to a PDF using the public texlive.net API.
+ * This version uses FormData to send the request, which is often more
+ * compatible with CGI scripts than URL-encoded data.
  * @param latexCode The full string of LaTeX code.
  * @returns A promise that resolves to a PDF blob.
  * @throws An error with compilation logs if the compilation fails.
  */
 export const compileLatexToPdf = async (latexCode: string): Promise<Blob> => {
-  // Using texlive.net's public CGI script, which supports CORS.
-  // This is more robust than using a generic CORS proxy.
   const apiEndpoint = 'https://texlive.net/cgi-bin/latexcgi';
 
-  const params = new URLSearchParams();
-  params.append('filecontents', latexCode);
-  params.append('engine', 'pdflatex');
-  params.append('return_type', 'pdf');
+  // Use FormData to construct the request body.
+  // This sends data as 'multipart/form-data', which is robust for file-like content.
+  const formData = new FormData();
+  formData.append('filecontents', latexCode);
+  formData.append('engine', 'pdflatex');
+  formData.append('return_type', 'pdf');
 
   let response;
   try {
     response = await fetch(apiEndpoint, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body: params.toString(),
+      body: formData, // The browser will set the 'Content-Type' header automatically.
     });
   } catch (error: any) {
     console.error('Network error during PDF compilation request:', error);
