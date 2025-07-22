@@ -6,25 +6,22 @@
  * @throws An error with compilation logs if the compilation fails.
  */
 export const compileLatexToPdf = async (latexCode: string): Promise<Blob> => {
-  // Switched to a different CORS proxy to improve reliability, as public proxies can be unstable or blocked.
-  // This proxy requires URL encoding of the target URL.
+  // Switched to latexonline.cc, a more stable public compilation service.
+  // The previous service (rtex.probablya.dev) was returning internal server errors.
+  // This service directly returns a PDF on success or a log file on failure.
   const corsProxyPrefix = 'https://api.allorigins.win/raw?url=';
-  const rtexEndpoint = 'https://rtex.probablya.dev/api/v2/tex';
-  const apiEndpoint = `${corsProxyPrefix}${encodeURIComponent(rtexEndpoint)}`;
-  
-  let compileResponse;
+  const latexOnlineEndpoint = 'https://latexonline.cc/compile';
+  const apiEndpoint = `${corsProxyPrefix}${encodeURIComponent(latexOnlineEndpoint)}`;
 
+  const formData = new FormData();
+  formData.append('text', latexCode);
+  formData.append('command', 'pdflatex'); // Use pdflatex compiler
+
+  let response;
   try {
-    // First API call to submit the code for compilation
-    compileResponse = await fetch(apiEndpoint, {
+    response = await fetch(apiEndpoint, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        code: latexCode,
-        format: 'pdf',
-      }),
+      body: formData, // The browser will automatically set the Content-Type to multipart/form-data
     });
   } catch (error: any) {
     console.error('Network error during PDF compilation request via proxy:', error);
@@ -38,80 +35,39 @@ export const compileLatexToPdf = async (latexCode: string): Promise<Blob> => {
     );
   }
 
-  if (!compileResponse.ok) {
-    const errorBody = await compileResponse.text().catch(() => 'Could not read error body.');
-    // The proxy may return specific statuses for upstream issues.
-    if (compileResponse.status >= 500) {
-       throw new Error(
-        `The PDF compilation service or the CORS proxy appears to be down. (Proxy reported status: ${compileResponse.status} ${compileResponse.statusText})`
-      );
-    }
-    throw new Error(
-      `The compilation service returned an error: ${compileResponse.status} ${compileResponse.statusText}. Response: ${errorBody}`
+  // latexonline.cc returns 200 OK for both success (PDF) and failure (log file).
+  // We need to inspect the Content-Type header to determine the outcome.
+  if (!response.ok) {
+     const errorBody = await response.text().catch(() => 'Could not read error body.');
+     throw new Error(
+      `The compilation service or proxy returned an error: ${response.status} ${response.statusText}. Response: ${errorBody}`
     );
   }
 
-  const result = await compileResponse.json().catch(async () => {
-    // If parsing fails, it might be an error page from the proxy.
-    const textResponse = await compileResponse.text().catch(() => '');
-    console.error('Failed to parse JSON response from compilation service. Raw response:', textResponse);
-    throw new Error('Failed to parse response from compilation service. The proxy may have returned a non-JSON error page.');
-  });
+  const contentType = response.headers.get('content-type');
+  const blob = await response.blob();
 
-
-  if (result.status === 'error') {
-    let errorLog = 'No log available.';
-    if (result.log) {
-      try {
-        // The log is Base64 encoded.
-        errorLog = atob(result.log);
-      } catch (e) {
-        console.error('Failed to decode Base64 log:', e);
-        errorLog = 'Could not decode the error log.';
-      }
+  if (contentType && contentType.includes('application/pdf')) {
+    // Success! We have a PDF.
+    return blob;
+  } else if (contentType && (contentType.includes('text/plain') || contentType.includes('text/html'))) {
+    // Failure. The blob is likely a log file.
+    const logText = await blob.text();
+    
+    // Check if the content is an error from the proxy itself
+    if (logText.toLowerCase().includes("allorigins") || logText.toLowerCase().includes("proxy")) {
+      console.error("Proxy error response:", logText);
+      throw new Error("The CORS proxy returned an error page instead of a compilation result. The compilation service may be unavailable or blocked.");
     }
-    // The log will be displayed as plain text, so newlines are important.
-    throw new Error(`LaTeX Compilation Failed. Log:\n\n${errorLog}`);
-  }
-
-  if (result.status !== 'success' || !result.filename) {
-    throw new Error('Compilation service returned an unexpected response.');
-  }
-
-  // Second API call to download the resulting PDF, also through the proxy
-  const rtexPdfUrl = `https://rtex.probablya.dev/api/v2/l/${result.filename}`;
-  const pdfUrl = `${corsProxyPrefix}${encodeURIComponent(rtexPdfUrl)}`;
-  let pdfResponse;
-
-  try {
-    pdfResponse = await fetch(pdfUrl);
-  } catch (error: any) {
-    console.error('Network error during PDF download request via proxy:', error);
-    if (error instanceof TypeError && error.message.includes('Failed to fetch')) {
-      throw new Error(
-        'Network Error: Could not download the compiled PDF. The proxy may be down or your connection blocked.'
-      );
-    }
+    
+    // Assume it's a LaTeX compilation log
+    throw new Error(`LaTeX Compilation Failed. Log:\n\n${logText}`);
+  } else {
+    // Unexpected response type. Could be a proxy error page with a different content type.
+     const fallbackText = await blob.text().catch(() => "Could not read response body.");
+     console.error(`Unexpected response from compilation service. Content-Type: ${contentType || 'N/A'}. Body:`, fallbackText);
     throw new Error(
-      `An unexpected error occurred while downloading the PDF: ${error.message}`
+      `Unexpected response from compilation service. It may be down or have changed its output format. (Content-Type: ${contentType || 'N/A'})`
     );
   }
-
-  if (!pdfResponse.ok) {
-    throw new Error(
-      `Failed to download the compiled PDF. Status: ${pdfResponse.status} ${pdfResponse.statusText}`
-    );
-  }
-
-  const pdfBlob = await pdfResponse.blob();
-  if (pdfBlob.type !== 'application/pdf') {
-     // The proxy might return an HTML error page with a 200 OK, so check content type.
-    const textContent = await pdfBlob.text().catch(()=>"");
-    if(textContent.toLowerCase().includes("proxy") || textContent.toLowerCase().includes("error")) { // Generic check for proxy error page
-        throw new Error("The CORS proxy returned an error page instead of a PDF. The compiled file may have expired or the proxy failed.");
-    }
-    throw new Error(`Downloaded file is not a PDF (was ${pdfBlob.type}). The proxy service may have failed or returned an error page.`);
-  }
-  
-  return pdfBlob;
 };
