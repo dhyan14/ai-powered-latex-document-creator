@@ -7,9 +7,8 @@ import ErrorMessage from './components/ErrorMessage';
 import ImageInputArea from './components/ImageInputArea';
 import PdfInputArea from './components/PdfInputArea';
 import InputMethodSelector from './components/InputMethodSelector';
-// Removed: import OutputPreview from './components/OutputPreview';
 import { updateLatexDocument, rewriteSelectedLatex, generateLatexFromImageAndPrompt, generateLatexFromPdfAndPrompt, convertLatexFormat } from './services/geminiService';
-// Removed: import { compileLatexToPdfMock } from './services/latexCompilationService';
+import { compileLatexToPdf } from './services/latexCompilationService';
 import { ActiveActionType, InputMethodType, OutputFormatType } from './types';
 
 const initialLatexCode = `\\documentclass[aspectratio=169]{beamer}
@@ -79,11 +78,13 @@ const App: React.FC = () => {
   const [pdfPrompt, setPdfPrompt] = useState<string>('');
   const [pdfFileName, setPdfFileName] = useState<string | null>(null);
 
-  // Removed State for PDF Compilation and Preview
-  // const [pdfDataUri, setPdfDataUri] = useState<string | null>(null);
-  // const [isCompiling, setIsCompiling] = useState<boolean>(false);
-  // const [compileError, setCompileError] = useState<string | null>(null);
+  const [isCompiling, setIsCompiling] = useState<boolean>(false);
+  const [compileError, setCompileError] = useState<string | null>(null);
 
+  const clearErrors = () => {
+    setError(null);
+    setCompileError(null);
+  };
 
   const handleLatexCodeChange = (newCode: string) => {
     setLatexCode(newCode);
@@ -152,11 +153,11 @@ const App: React.FC = () => {
   }, []);
 
   const handleFormatChange = useCallback(async (newFormat: OutputFormatType) => {
-    if (newFormat === outputFormat || isLoading) return;
+    if (newFormat === outputFormat || isLoading || isCompiling) return;
 
     setActiveActionType('convert');
     setIsLoading(true);
-    setError(null);
+    clearErrors();
     clearSelection();
 
     try {
@@ -174,7 +175,7 @@ const App: React.FC = () => {
       setIsLoading(false);
       setActiveActionType(null);
     }
-  }, [latexCode, outputFormat, isLoading]);
+  }, [latexCode, outputFormat, isLoading, isCompiling]);
 
   const handleUpdatePresentation = useCallback(async () => {
     if (!userPrompt.trim()) {
@@ -184,7 +185,7 @@ const App: React.FC = () => {
 
     setActiveActionType('update');
     setIsLoading(true);
-    setError(null);
+    clearErrors();
     clearSelection(); 
 
     try {
@@ -216,7 +217,7 @@ const App: React.FC = () => {
     
     setActiveActionType('modify');
     setIsLoading(true);
-    setError(null);
+    clearErrors();
 
     try {
       const rewrittenSnippet = await rewriteSelectedLatex(selectedText, latexCode, userPrompt);
@@ -249,7 +250,7 @@ const App: React.FC = () => {
 
     setActiveActionType('generateImage');
     setIsLoading(true);
-    setError(null);
+    clearErrors();
     clearSelection();
 
     try {
@@ -283,7 +284,7 @@ const App: React.FC = () => {
 
     setActiveActionType('generatePdf');
     setIsLoading(true);
-    setError(null);
+    clearErrors();
     clearSelection();
 
     try {
@@ -309,7 +310,29 @@ const App: React.FC = () => {
     }
   }, [selectedPdf, pdfMimeType, pdfPrompt, latexCode, clearPdfState, outputFormat]);
 
-  // Removed handleCompileLatex and handleClearPdfPreview
+  const handleCompileAndDownload = useCallback(async () => {
+    if (isLoading || isCompiling) return;
+    
+    setIsCompiling(true);
+    clearErrors();
+
+    try {
+      const pdfBlob = await compileLatexToPdf(latexCode);
+      const url = window.URL.createObjectURL(pdfBlob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'document.pdf';
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      a.remove();
+    } catch (err: any) {
+      setCompileError(err.message || 'An unknown error occurred during PDF compilation.');
+      console.error(err);
+    } finally {
+      setIsCompiling(false);
+    }
+  }, [latexCode, isLoading, isCompiling]);
 
 
   return (
@@ -327,6 +350,8 @@ const App: React.FC = () => {
             outputFormat={outputFormat}
             onFormatChange={handleFormatChange}
             isLoading={isLoading}
+            isCompiling={isCompiling}
+            onCompileAndDownload={handleCompileAndDownload}
           />
         </div>
 
@@ -337,7 +362,7 @@ const App: React.FC = () => {
               <InputMethodSelector
                 selectedMethod={selectedInputMethod}
                 onMethodChange={setSelectedInputMethod}
-                isLoading={isLoading}
+                isLoading={isLoading || isCompiling}
               />
 
               <hr className="border-slate-200" />
@@ -348,7 +373,7 @@ const App: React.FC = () => {
                   setPrompt={setUserPrompt}
                   onUpdate={handleUpdatePresentation}
                   onModifySelected={handleModifySelectedCode}
-                  isLoading={isLoading}
+                  isLoading={isLoading || isCompiling}
                   isTextSelected={!!selectedText && selectedText.length > 0}
                   activeActionType={activeActionType}
                 />
@@ -361,7 +386,7 @@ const App: React.FC = () => {
                   imagePrompt={imagePrompt}
                   setImagePrompt={setImagePrompt}
                   onGenerateFromImage={handleGenerateFrameFromImage}
-                  isLoading={isLoading}
+                  isLoading={isLoading || isCompiling}
                   activeActionType={activeActionType}
                 />
               )}
@@ -373,19 +398,19 @@ const App: React.FC = () => {
                   pdfPrompt={pdfPrompt}
                   setPdfPrompt={setPdfPrompt}
                   onGenerateFromPdf={handleGenerateFromPdf}
-                  isLoading={isLoading}
+                  isLoading={isLoading || isCompiling}
                   activeActionType={activeActionType}
                 />
               )}
           </div>
           
           {error && <ErrorMessage message={error} />}
+          {compileError && <ErrorMessage message={compileError} />}
         </div>
       </main>
       <footer className="w-full max-w-7xl mx-auto text-center py-6">
         <p className="text-sm text-slate-500">
-          Powered by Gemini API. Ensure your API key is configured.
-          {/* Removed: PDF compilation is a mock feature for demonstration. */}
+          Powered by Gemini API. Ensure your API key is configured. PDF compilation by an external service.
         </p>
       </footer>
     </div>
